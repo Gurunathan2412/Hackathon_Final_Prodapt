@@ -1,54 +1,102 @@
-# Telecom Assistant
+# Telecom Assistant - Multi-Agent Customer Support System
 
-Modular AI-driven telecom customer assistant integrating:
-- LangGraph (orchestration)
-- CrewAI (billing & account)
-- AutoGen (network troubleshooting)
-- LangChain (service recommendations)
-- LlamaIndex (knowledge retrieval)
+A sophisticated customer support system using multiple AI agent frameworks (CrewAI, AutoGen, LangChain, LlamaIndex) orchestrated with LangGraph.
 
-## Setup
-1. Create .env and set OPENAI_API_KEY.
-2. pip install -r telecom_assistant/requirements.txt
-3. (Optional) Run vector store build: from utils.document_loader import ensure_vector_store; ensure_vector_store()
-4. streamlit run telecom_assistant/app.py
+## 🚀 Quick Start
 
-## Features
-Submit queries via UI. System classifies and routes to appropriate agent framework.
+```bash
+# Install dependencies
+pip install -r requirements.txt
 
-## Enhancements
-- Caching for agents (CrewAI, LangChain, AutoGen, LlamaIndex) to reduce init latency.
-- Structured error responses with detail and fallback suggestions.
-- UI expanders for intermediate JSON and full state.
+# Set up environment
+cp .env.example .env
+# Add your OPENAI_API_KEY to .env
 
-## Notes
-Some advanced multi-agent behaviors depend on external service availability and API keys.
+# Run the application
+streamlit run ui/streamlit_app.py
+```
 
-### Logging
-Loguru integrated for classification and agent error events (optional install).
+## 📋 Features
 
-### Troubleshooting
-If an agent returns 'not initialized', verify package installed in active venv and API key loaded.
+- **Multi-Framework Architecture**: CrewAI, AutoGen, LangChain, LlamaIndex
+- **Intelligent Query Routing**: Automatic classification and routing
+- **Admin Dashboard**: Document upload and knowledge base management
+- **Customer Dashboard**: Interactive query interface
+- **Database Integration**: 13 tables with comprehensive customer data
 
-### Caching
-Agents and query engines are cached after first creation to improve performance; restart app to rebuild if underlying data changes.
+## 🏗️ Architecture
 
-### Sample Queries
-- Why is my bill higher this month?
-- Recommend a plan for a family of four streaming daily.
-- I can't make calls, signal drops frequently.
-- How do I enable VoLTE?
+### Query Types & Frameworks:
+1. **Billing Queries** → CrewAI agents
+2. **Network Issues** → AutoGen multi-agent conversation
+3. **Service Plans** → LangChain ReAct agent
+4. **Technical Support** → LlamaIndex query engine
 
-### Security Note
-Do not commit .env containing API keys. Rotate keys periodically.
+### Orchestration:
+- **LangGraph** StateGraph with conditional routing
+- Context enrichment and response formatting
 
-### Future Work
-- Add authentication & user management
-- Enhanced analytics dashboard
-- Automatic agent performance evaluation
-- Prompt optimization and cost tracking
+## 📁 Project Structure
 
-### License
-Internal project; add license if distributing.
+```
+telecom_assistant/
+├── agents/          # Agent implementations (CrewAI, AutoGen, LangChain, LlamaIndex)
+├── config/          # Configuration files
+├── data/            # Database and vector store
+├── orchestration/   # LangGraph orchestration
+├── ui/              # Streamlit interface
+├── utils/           # Utility functions
+├── docs/            # Documentation and archives
+├── tests/           # Test files
+└── app.py           # Main application entry
+```
 
-Status field indicates pipeline progression (classified -> ok/error -> completed). Example status values: classified, ok, error, completed.
+## 📚 Documentation
+
+Full documentation is available in `docs/documentation/`:
+- [Quick Start Guide](docs/documentation/QUICK_START.md)
+- [Implementation Verification](docs/documentation/IMPLEMENTATION_VERIFICATION.md)
+- [Sample Queries Test Guide](docs/documentation/SAMPLE_QUERIES_TEST_GUIDE.md)
+- [Validation Summary](docs/documentation/VALIDATION_SUMMARY.md)
+
+## 🧪 Testing
+
+Run tests from the `tests/` directory:
+```bash
+# Quick validation (< 5 seconds)
+python tests/test_quick_validation.py
+
+# Classification accuracy test
+python tests/test_sample_queries_classification.py
+
+# Integration tests
+python tests/test_integration.py
+```
+
+## 🛠️ Utilities
+
+- `check_data.py` - Database data verification utility
+
+## 🔧 Technologies
+
+- **Python 3.13+**
+- **CrewAI 1.6.1** - Multi-agent collaboration
+- **AutoGen** - Conversational agents with function calling
+- **LangChain** - ReAct agents and tools
+- **LlamaIndex** - Vector-based retrieval
+- **LangGraph** - Workflow orchestration
+- **Streamlit** - Web interface
+- **SQLite** - Data storage
+- **OpenAI GPT-4o-mini** - LLM backend
+
+## 📝 License
+
+Copyright © 2025 Telecom Assistant Project
+
+## 🤝 Support
+
+For issues or questions, refer to the documentation in `docs/documentation/`.
+
+---
+
+**Status**: ✅ Production Ready | **Version**: 1.0 | **Last Updated**: November 30, 2025
