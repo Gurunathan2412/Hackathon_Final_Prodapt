@@ -1,0 +1,21 @@
+# Project dependencies
+streamlit
+pandas
+langgraph
+crewai
+autogen
+langchain
+llama-index
+llama-index-core
+llama-index-llms-openai
+llama-index-embeddings-openai
+llama-index-readers-file
+chromadb
+python-dotenv
+openai
+tiktoken
+langchain-openai
+# optional: rich loguru
+rich
+loguru
+# end
