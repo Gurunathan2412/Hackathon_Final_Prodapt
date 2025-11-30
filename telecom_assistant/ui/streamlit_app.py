@@ -1,34 +1,94 @@
 # Streamlit UI code
 import streamlit as st
 import pandas as pd
-import json
 from orchestration.graph import create_graph  # type: ignore
 from utils.database import list_customers, get_customer, get_customer_usage, get_service_plan, list_active_incidents
 
+# Set page configuration
+st.set_page_config(
+    page_title="Telecom Service Assistant",
+    page_icon="📱",
+    layout="wide"
+)
 
 def init_session_state():
+    """Initialize all session state variables"""
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
     if "user_type" not in st.session_state:
-        # Default can be switched between "Customer" and "Admin"
-        st.session_state.user_type = "Customer"
+        st.session_state.user_type = None
+    if "email" not in st.session_state:
+        st.session_state.email = None
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+    if "graph" not in st.session_state:
+        # Initialize the LangGraph workflow once and cache it
+        st.session_state.graph = create_graph()
+    if "selected_customer_id" not in st.session_state:
+        st.session_state.selected_customer_id = None
+
+
+def process_query(query: str, customer_info: dict = None) -> str:
+    """Process a user query through the LangGraph workflow"""
+    # Use cached graph from session state
+    workflow = st.session_state.graph
+    
+    # Create state with customer context
+    state = {
+        "query": query,
+        "customer_info": customer_info or {},
+        "classification": "",
+        "intermediate_responses": {},
+        "final_response": "",
+        "chat_history": st.session_state.chat_history,
+    }
+    
+    try:
+        # Process through the graph
+        result = workflow.invoke(state)
+        return result.get("final_response", "No response generated.")
+    except Exception as e:
+        return f"Error processing query: {str(e)}"
 
 
 def customer_dashboard(customer_info=None, customer_usage=None, service_plan=None):
-    st.title("Telecom Service Assistant")
+    st.title("Welcome to Telecom Service Assistant")
     st.caption("Customer Portal")
 
-    # Create tabs (adding a placeholder Overview tab since snippet started at tab2)
-    tab1, tab2, tab3 = st.tabs(["Overview", "My Account Information", "Network Status"])
+    # Create tabs with Chat Assistant as first tab
+    tab1, tab2, tab3, tab4 = st.tabs(["Chat Assistant", "My Account Information", "Network Status", "Quick Query"])
 
+    # Tab 1: Chat Assistant (NEW)
     with tab1:
-        st.header("Overview")
-        if customer_info:
-            st.write(f"Welcome, **{customer_info.get('name', 'Customer')}**!")
-            st.write(f"Account Status: **{customer_info.get('account_status', 'Unknown')}**")
-        else:
-            st.write("Welcome to your telecom service dashboard. Use the other tabs to view details.")
-            st.info("👈 Please select a customer from the sidebar to view personalized data.")
+        st.header("Chat with our AI Assistant")
+        
+        # Display chat history
+        for message in st.session_state.chat_history:
+            with st.chat_message(message["role"]):
+                st.write(message["content"])
+        
+        # Chat input
+        if prompt := st.chat_input("How can I help you today?"):
+            # Add user message to chat history
+            st.session_state.chat_history.append({"role": "user", "content": prompt})
+            
+            # Display user message
+            with st.chat_message("user"):
+                st.write(prompt)
+            
+            # Process user query through LangGraph
+            with st.chat_message("assistant"):
+                with st.spinner("Thinking..."):
+                    response = process_query(prompt, customer_info)
+                    st.write(response)
+            
+            # Add assistant response to chat history
+            st.session_state.chat_history.append({"role": "assistant", "content": response})
+            
+            # Force rerun to update chat display
+            st.rerun()
 
-    # Snippet: Account Information (originally shown under tab2)
+    # Tab 2: Account Information (EXISTING - preserved)
     with tab2:
         st.header("My Account Information")
         
@@ -97,7 +157,7 @@ def customer_dashboard(customer_info=None, customer_usage=None, service_plan=Non
             if additional_charges > 0:
                 st.write(f"Additional Charges: **₹{additional_charges:.2f}**")
 
-    # Snippet: Network Status (originally shown under tab3)
+    # Tab 3: Network Status (EXISTING - preserved)
     with tab3:
         st.header("Network Status")
         
@@ -165,6 +225,39 @@ def customer_dashboard(customer_info=None, customer_usage=None, service_plan=Non
             })
             st.dataframe(status_df, width='stretch')
             st.success("✓ All networks operating normally")
+
+    # Tab 4: Quick Query (EXISTING functionality preserved in separate tab)
+    with tab4:
+        st.header("Quick Query (Detailed View)")
+        st.info("Use this tab to see detailed workflow information and intermediate responses.")
+        
+        query = st.text_area("Enter your telecom question", height=120)
+        if st.button("Submit Query") and query.strip():
+            workflow = st.session_state.graph
+            state = {
+                "query": query,
+                "customer_info": customer_info or {},
+                "classification": "",
+                "intermediate_responses": {},
+                "final_response": "",
+                "chat_history": st.session_state.chat_history,
+            }
+            result = workflow.invoke(state)
+            resp = result if isinstance(result, dict) else {}
+            st.caption(f"Workflow status: {resp.get('status','')} ")
+            st.markdown(f"**Classification:** `{resp.get('classification','')}`")
+            st.subheader("Final Response")
+            st.write(resp.get("final_response","(none)"))
+            with st.expander("Intermediate Responses JSON"):
+                import json as _json
+                st.json(resp.get("intermediate_responses", {}))
+            with st.expander("Full State Dump"):
+                st.code(_json.dumps(resp, indent=2))
+            status_val = next(iter(result.get('intermediate_responses', {}).values()), {}).get('status') if result.get('intermediate_responses') else None
+            if status_val == 'error':
+                st.error("Processing failed")
+            elif status_val == 'ok':
+                st.success("Processed successfully")
 
 
 def admin_dashboard():
@@ -259,57 +352,90 @@ def admin_dashboard():
 
 def main():
     init_session_state()
-    st.sidebar.header("User Mode")
-    mode = st.sidebar.selectbox("Select mode", ["Customer", "Admin"], index=0)
-    st.session_state.user_type = mode
-
-    customer_options = list_customers()
-    cust_map = {f"{c['name']} ({c['customer_id']})": c['customer_id'] for c in customer_options}
-    selected_customer = st.sidebar.selectbox("Customer", list(cust_map.keys()) or ["None"])
-    customer_id = cust_map.get(selected_customer)
     
-    # Fetch all required customer data
-    customer_info = get_customer(customer_id) if customer_id else None
-    customer_usage = get_customer_usage(customer_id) if customer_id else []
-    service_plan = None
-    if customer_info and customer_info.get('service_plan_id'):
-        service_plan = get_service_plan(customer_info['service_plan_id'])
+    # Sidebar for authentication
+    with st.sidebar:
+        st.title("📱 Telecom Assistant")
+        
+        if not st.session_state.authenticated:
+            # Login form
+            st.subheader("Login")
+            email = st.text_input("Email Address")
+            user_type = st.selectbox("User Type", ["Customer", "Admin"])
+            
+            if st.button("Login"):
+                if email and "@" in email:
+                    st.session_state.authenticated = True
+                    st.session_state.user_type = user_type
+                    st.session_state.email = email
+                    st.session_state.chat_history = []  # Clear chat history on login
+                    st.success(f"Logged in as {user_type}")
+                    st.rerun()
+                else:
+                    st.error("Please enter a valid email address")
+        else:
+            # Logged in state
+            st.success(f"Logged in as {st.session_state.user_type}")
+            st.text(f"Email: {st.session_state.email}")
+            
+            if st.button("Logout"):
+                st.session_state.authenticated = False
+                st.session_state.user_type = None
+                st.session_state.email = None
+                st.session_state.chat_history = []
+                st.session_state.selected_customer_id = None
+                st.rerun()
+            
+            st.divider()
+            
+            # Customer selector (for both Customer and Admin views)
+            st.subheader("Select Customer")
+            customer_options = list_customers()
+            cust_map = {f"{c['name']} ({c['customer_id']})": c['customer_id'] for c in customer_options}
+            
+            if cust_map:
+                selected_customer = st.selectbox("Customer", list(cust_map.keys()))
+                st.session_state.selected_customer_id = cust_map.get(selected_customer)
+            else:
+                st.warning("No customers found in database")
+                st.session_state.selected_customer_id = None
+    
+    # Main content - only show if authenticated
+    if st.session_state.authenticated:
+        customer_id = st.session_state.selected_customer_id
+        
+        # Fetch all required customer data
+        customer_info = get_customer(customer_id) if customer_id else None
+        customer_usage = get_customer_usage(customer_id) if customer_id else []
+        service_plan = None
+        if customer_info and customer_info.get('service_plan_id'):
+            service_plan = get_service_plan(customer_info['service_plan_id'])
 
-    if st.session_state.user_type == "Admin":
-        admin_dashboard()
+        if st.session_state.user_type == "Admin":
+            admin_dashboard()
+        else:
+            customer_dashboard(customer_info, customer_usage, service_plan)
     else:
-        customer_dashboard(customer_info, customer_usage, service_plan)
-
-    st.divider()
-    st.header("Ask a Question")
-    query = st.text_area("Enter your telecom question", height=120)
-    if st.button("Submit Query") and query.strip():
-        workflow = create_graph()
-        state = {
-            "query": query,
-            "customer_info": customer_info or {},
-            "classification": "",
-            "intermediate_responses": {},
-            "final_response": "",
-            "chat_history": [],
-        }
-        result = workflow.invoke(state)  # type: ignore
-        # Safely handle missing result
-        resp = result if isinstance(result, dict) else {}
-        st.caption(f"Workflow status: {resp.get('status','')} ")
-        st.markdown(f"**Classification:** `{resp.get('classification','')}`")
-        st.subheader("Final Response")
-        st.write(resp.get("final_response","(none)"))
-        with st.expander("Intermediate Responses JSON"):
-            st.json(resp.get("intermediate_responses", {}))
-        with st.expander("Full State Dump"):
-            import json as _json
-            st.code(_json.dumps(resp, indent=2))
-        status_val = next(iter(result.get('intermediate_responses', {}).values()), {}).get('status') if result.get('intermediate_responses') else None
-        if status_val == 'error':
-            st.error("Processing failed")
-        elif status_val == 'ok':
-            st.success("Processed successfully")
+        # Welcome screen for non-authenticated users
+        st.title("Welcome to Telecom Service Assistant")
+        st.markdown("""
+        ### 📱 Your AI-Powered Telecom Support
+        
+        Please login using the sidebar to access:
+        - 💬 **Chat Assistant** - Conversational AI support
+        - 📊 **Account Information** - View your usage and billing
+        - 🌐 **Network Status** - Real-time network monitoring
+        - 🔧 **Admin Dashboard** - Manage customers and incidents
+        
+        ---
+        **Features:**
+        - Multi-framework AI (CrewAI, AutoGen, LangChain, LlamaIndex)
+        - Intelligent query routing with LangGraph
+        - Real-time database integration
+        - Comprehensive troubleshooting
+        """)
+        
+        st.info("👈 Please login with your email address to get started")
 
 
 if __name__ == "__main__":
