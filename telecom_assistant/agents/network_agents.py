@@ -37,9 +37,18 @@ Your responsibilities:
 3. Identify patterns that indicate specific network problems
 4. Determine if the issue is widespread or localized to the customer
 
-IMPORTANT: Always call the check_network_incidents function first to get real incident data from the database.
-Extract the region from the customer's query and pass it to the function.
-Example: If customer mentions "Mumbai West", call check_network_incidents(region="Mumbai").
+IMPORTANT: Always call the check_network_incidents function to get real incident data from the database.
+
+HOW TO EXTRACT LOCATION:
+- If the query starts with "Customer location: [city]", extract that city name
+- Example: "Customer location: Bangalore. Issue: slow internet" → use region="Bangalore"
+- If no location is provided in the query, call check_network_incidents with empty region (shows all active incidents)
+- When calling the function, pass ONLY the city name (e.g., "Bangalore", "Delhi", "Mumbai")
+- Do NOT pass full addresses or unnecessary details
+
+Example function call:
+- Query has "Customer location: Bangalore" → check_network_incidents(region="Bangalore")
+- Query has "Customer location: Delhi West" → check_network_incidents(region="Delhi")
 """.strip()
 
 DEVICE_EXPERT_SYSMSG = """

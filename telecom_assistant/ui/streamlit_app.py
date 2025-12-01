@@ -1,8 +1,14 @@
 # Streamlit UI code
 import streamlit as st
 import pandas as pd
+from datetime import datetime
+from pathlib import Path
 from orchestration.graph import create_graph  # type: ignore
-from utils.database import list_customers, get_customer, get_customer_usage, get_service_plan, list_active_incidents
+from utils.database import (
+    list_customers, get_customer, get_customer_usage, get_service_plan, 
+    list_active_incidents, get_all_support_tickets, create_support_ticket, 
+    update_ticket_status
+)
 
 # Set page configuration
 st.set_page_config(
@@ -275,40 +281,224 @@ def admin_dashboard():
         )
         if uploaded_files:
             for file in uploaded_files:
-                st.success(f"Processed {file.name} and added to knowledge base")
+                try:
+                    # Save file to data/documents/
+                    save_path = Path(__file__).parent.parent / "data" / "documents" / file.name
+                    
+                    # Check for duplicate
+                    if save_path.exists():
+                        st.warning(f"⚠️ {file.name} already exists, overwriting...")
+                    
+                    # Save file
+                    with open(save_path, "wb") as f:
+                        f.write(file.getbuffer())
+                    
+                    # Clear LlamaIndex cache to force rebuild
+                    import agents.knowledge_agents as ka
+                    ka._ENGINE_CACHE = None
+                    
+                    st.success(f"✅ {file.name} uploaded successfully!")
+                    st.info("📚 Document will be indexed on next knowledge query (~10-30 seconds)")
+                    
+                except Exception as e:
+                    st.error(f"❌ Failed to upload {file.name}: {str(e)}")
+            
+            # Refresh document list
+            st.rerun()
+        
         st.subheader("Existing Documents")
-        doc_df = pd.DataFrame({
-            "Document Name": [
-                "Service Plans Guide.md",
-                "Network Troubleshooting Guide.md",
-                "Billing FAQs.md",
-                "Technical Support Guide.md",
-            ],
-            "Type": ["Markdown", "Markdown", "Markdown", "Markdown"],
-            "Last Updated": ["2023-06-20", "2023-06-18", "2023-06-15", "2023-06-10"],
-        })
-        st.dataframe(doc_df, width='stretch')
+        # Read real documents from the active data/documents directory
+        # Use absolute path relative to project root
+        docs_path = Path(__file__).parent.parent / "data" / "documents"
+        if docs_path.exists():
+            docs = [f for f in docs_path.iterdir() if f.is_file() and f.suffix in ['.txt', '.md', '.pdf']]
+            if docs:
+                doc_data = []
+                for doc in docs:
+                    file_stat = doc.stat()
+                    doc_data.append({
+                        "Document Name": doc.name,
+                        "Type": doc.suffix.upper().replace('.', ''),
+                        "Size (KB)": f"{file_stat.st_size / 1024:.1f}",
+                        "Last Updated": datetime.fromtimestamp(file_stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+                    })
+                doc_df = pd.DataFrame(doc_data)
+                st.dataframe(doc_df, width='stretch')
+                st.info(f"📚 Total documents in knowledge base: {len(docs)}")
+            else:
+                st.warning("No documents found in knowledge base")
+        else:
+            st.error("Knowledge base directory not found")
 
     # Customer Support Dashboard
     with tab2:
         st.header("Customer Support Dashboard")
-        st.subheader("Active Support Tickets")
-        ticket_df = pd.DataFrame({
-            "Ticket ID": ["TKT004", "TKT005"],
-            "Customer": ["Ananya Singh", "Vikram Reddy"],
-            "Issue": ["Account reactivation", "Slow internet speeds"],
-            "Status": ["In Progress", "Assigned"],
-            "Priority": ["Medium", "Medium"],
-            "Created": ["2023-06-15", "2023-06-17"],
-        })
-        st.dataframe(ticket_df, width='stretch')
-        col1, col2, col3 = st.columns(3)
+        
+        # CREATE NEW TICKET FORM
+        with st.expander("➕ Create New Ticket", expanded=False):
+            with st.form("create_ticket_form"):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Customer dropdown
+                    customers = list_customers()
+                    customer_options = {f"{c['name']} ({c['customer_id']})": c['customer_id'] for c in customers}
+                    selected_customer = st.selectbox("Customer", list(customer_options.keys()))
+                    
+                    # Category dropdown
+                    category = st.selectbox("Issue Category", [
+                        "Billing Inquiry",
+                        "Connectivity Issue",
+                        "Service Request",
+                        "Technical Support"
+                    ])
+                
+                with col2:
+                    # Priority dropdown
+                    priority = st.selectbox("Priority", ["Low", "Medium", "High", "Critical"])
+                
+                # Description
+                description = st.text_area("Issue Description", height=100)
+                
+                # Submit button
+                submitted = st.form_submit_button("Create Ticket")
+                
+                if submitted:
+                    if description.strip():
+                        customer_id = customer_options[selected_customer]
+                        ticket_id = create_support_ticket(customer_id, category, description, priority)
+                        st.success(f"✅ Ticket {ticket_id} created successfully!")
+                        st.rerun()
+                    else:
+                        st.error("Please provide an issue description")
+        
+        st.divider()
+        
+        # FILTER AND DISPLAY TICKETS
+        col1, col2 = st.columns([2, 8])
+        
         with col1:
-            st.metric("Open Tickets", "2", "-3")
-        with col2:
-            st.metric("Avg. Resolution Time", "4.3 hours", "-0.5")
-        with col3:
-            st.metric("Customer Satisfaction", "92%", "+3%")
+            status_filter = st.selectbox(
+                "Filter by Status",
+                ["All", "Open", "In Progress", "Assigned", "Resolved"]
+            )
+        
+        st.subheader("Support Tickets")
+        
+        # Fetch tickets with filter
+        if status_filter == "All":
+            all_tickets = get_all_support_tickets()
+        else:
+            all_tickets = get_all_support_tickets(status=status_filter)
+        
+        if all_tickets:
+            # Display tickets with update functionality
+            displayed_tickets = all_tickets if status_filter == "All" else [t for t in all_tickets if t['status'] == status_filter]
+            
+            if displayed_tickets:
+                st.write(f"**Found {len(displayed_tickets)} ticket(s)**")
+                
+                # Display each ticket with update controls
+                for idx, ticket in enumerate(displayed_tickets):
+                    with st.container():
+                        col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
+                        
+                        with col1:
+                            st.markdown(f"**{ticket['ticket_id']}** - {ticket['customer_name']}")
+                            st.caption(f"📋 {ticket['issue_category']}")
+                            with st.expander("View Description"):
+                                st.write(ticket['issue_description'])
+                        
+                        with col2:
+                            current_status = ticket['status']
+                            status_options = ["Open", "In Progress", "Assigned", "Resolved"]
+                            current_index = status_options.index(current_status) if current_status in status_options else 0
+                            
+                            new_status = st.selectbox(
+                                "Status",
+                                status_options,
+                                index=current_index,
+                                key=f"status_{ticket['ticket_id']}"
+                            )
+                        
+                        with col3:
+                            st.write(f"**Priority:** {ticket['priority']}")
+                            st.caption(f"Created: {ticket['creation_time']}")
+                        
+                        with col4:
+                            # Show resolution notes input if status is Resolved
+                            if new_status == "Resolved":
+                                st.write("")  # Spacing
+                            
+                            if st.button("💾 Update", key=f"update_{ticket['ticket_id']}"):
+                                if new_status != current_status:
+                                    # If changing to Resolved, prompt for notes
+                                    if new_status == "Resolved":
+                                        st.session_state[f"show_notes_{ticket['ticket_id']}"] = True
+                                    else:
+                                        update_ticket_status(ticket['ticket_id'], new_status)
+                                        st.success(f"✅ Updated {ticket['ticket_id']} to {new_status}")
+                                        st.rerun()
+                                else:
+                                    st.info("No change in status")
+                        
+                        # Show resolution notes dialog if needed
+                        if st.session_state.get(f"show_notes_{ticket['ticket_id']}", False):
+                            with st.form(key=f"resolve_form_{ticket['ticket_id']}"):
+                                notes = st.text_area("Resolution Notes", height=100)
+                                col_a, col_b = st.columns(2)
+                                with col_a:
+                                    if st.form_submit_button("✅ Resolve"):
+                                        update_ticket_status(ticket['ticket_id'], "Resolved", notes)
+                                        st.session_state[f"show_notes_{ticket['ticket_id']}"] = False
+                                        st.success(f"✅ Ticket {ticket['ticket_id']} resolved")
+                                        st.rerun()
+                                with col_b:
+                                    if st.form_submit_button("Cancel"):
+                                        st.session_state[f"show_notes_{ticket['ticket_id']}"] = False
+                                        st.rerun()
+                        
+                        st.divider()
+            else:
+                st.success("✓ No tickets found for this filter!")
+            
+            st.divider()
+            
+            # Calculate real metrics from ALL tickets (not just displayed ones)
+            open_tickets = len([t for t in all_tickets if t['status'] == 'Open'])
+            in_progress_tickets = len([t for t in all_tickets if t['status'] == 'In Progress'])
+            resolved_tickets = [t for t in all_tickets if t['status'] == 'Resolved' and t['resolution_time']]
+            
+            # Calculate average resolution time
+            avg_resolution_hours = 0
+            if resolved_tickets:
+                total_hours = 0
+                for ticket in resolved_tickets:
+                    try:
+                        created = datetime.strptime(ticket['creation_time'], "%Y-%m-%d %H:%M:%S")
+                        resolved = datetime.strptime(ticket['resolution_time'], "%Y-%m-%d %H:%M:%S")
+                        hours = (resolved - created).total_seconds() / 3600
+                        total_hours += hours
+                    except Exception:
+                        pass
+                if total_hours > 0:
+                    avg_resolution_hours = total_hours / len(resolved_tickets)
+            
+            # Metrics row
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Open Tickets", open_tickets)
+            with col2:
+                st.metric("In Progress", in_progress_tickets)
+            with col3:
+                st.metric("Avg. Resolution Time", f"{avg_resolution_hours:.1f}h" if avg_resolution_hours > 0 else "N/A")
+            with col4:
+                total_tickets = len(all_tickets)
+                resolved_count = len(resolved_tickets)
+                satisfaction = int((resolved_count / total_tickets * 100)) if total_tickets > 0 else 0
+                st.metric("Resolution Rate", f"{satisfaction}%")
+        else:
+            st.info("No support tickets found in database")
 
     # Network Monitoring
     with tab3:

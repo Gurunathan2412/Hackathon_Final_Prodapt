@@ -5,9 +5,9 @@ from utils.database import get_customer_usage, get_service_plan, get_coverage_qu
 try:
     from langchain.agents import create_react_agent, AgentExecutor  # type: ignore
     from langchain.tools import Tool  # type: ignore
-    from langchain.tools.python.tool import PythonREPLTool  # type: ignore
     from langchain.prompts import PromptTemplate  # type: ignore
     from langchain_openai import ChatOpenAI  # type: ignore
+    PythonREPLTool = None  # Not needed for service recommendations
 except Exception:  # pragma: no cover
     create_react_agent = AgentExecutor = Tool = PythonREPLTool = PromptTemplate = ChatOpenAI = object  # type: ignore
 
@@ -24,10 +24,28 @@ When recommending plans, consider:
 2. Number of people/devices that will use the plan
 3. Special requirements (international calling, streaming, etc.)
 4. Budget constraints
+
 Always explain WHY a particular plan is a good fit for their needs.
-User query: {query}
-If you need more information, ask for it.
-""".strip()
+
+You have access to the following tools:
+
+{tools}
+
+Use the following format:
+
+Question: the input question you must answer
+Thought: you should always think about what to do
+Action: the action to take, should be one of [{tool_names}]
+Action Input: the input to the action
+Observation: the result of the action
+... (this Thought/Action/Action Input/Observation can repeat N times)
+Thought: I now know the final answer
+Final Answer: the final answer to the original input question
+
+Begin!
+
+Question: {input}
+Thought:{agent_scratchpad}""".strip()
 
 
 def _estimate_data_usage(activities: str) -> str:
@@ -62,7 +80,7 @@ def create_service_agent(db_uri: str = "sqlite:///telecom_assistant/data/telecom
     llm = None
     if ChatOpenAI is not object:
         try:  # pragma: no cover
-            llm = ChatOpenAI(model_name="gpt-4", temperature=0.2)
+            llm = ChatOpenAI(model_name="gpt-4o", temperature=0.2)
         except Exception:
             llm = None
 
@@ -88,11 +106,77 @@ def create_service_agent(db_uri: str = "sqlite:///telecom_assistant/data/telecom
             return f"Plan {plan_id} not found"
         data = "Unlimited" if plan['unlimited_data'] else f"{plan['data_limit_gb']} GB"
         voice = "Unlimited" if plan['unlimited_voice'] else f"{plan['voice_minutes']} mins"
+        intl_roaming = "Yes" if plan.get('international_roaming') else "No"
         return (
             f"{plan['name']}: ₹{plan['monthly_cost']}/month, "
             f"Data: {data}, Voice: {voice}, "
+            f"International Roaming: {intl_roaming}, "
             f"{plan['description']}"
         )
+    
+    def list_all_plans(filter_criteria: str = "all") -> str:
+        """List all available service plans. Use filter_criteria to narrow down:
+        'international' - plans with international roaming
+        'unlimited' - plans with unlimited data
+        'all' - all plans
+        """
+        import sqlite3
+        import os
+        
+        # Strip quotes if present (agent sometimes passes 'international' with quotes)
+        filter_criteria = filter_criteria.strip().strip("'").strip('"')
+        
+        # Handle different database path formats
+        db_path = db_uri.replace("sqlite:///", "")
+        if not os.path.isabs(db_path):
+            # Relative path - make it absolute
+            db_path = os.path.join(os.getcwd(), db_path)
+        if not os.path.exists(db_path):
+            # Try with data/ prefix
+            db_path = os.path.join(os.getcwd(), "data", "telecom.db")
+        
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        if filter_criteria.lower() == "international":
+            cursor.execute("""
+                SELECT plan_id, name, monthly_cost, unlimited_data, international_roaming 
+                FROM service_plans 
+                WHERE international_roaming = 1
+                ORDER BY monthly_cost
+            """)
+        elif filter_criteria.lower() == "unlimited":
+            cursor.execute("""
+                SELECT plan_id, name, monthly_cost, unlimited_data, international_roaming 
+                FROM service_plans 
+                WHERE unlimited_data = 1
+                ORDER BY monthly_cost
+            """)
+        else:
+            cursor.execute("""
+                SELECT plan_id, name, monthly_cost, unlimited_data, international_roaming 
+                FROM service_plans 
+                ORDER BY monthly_cost
+            """)
+        
+        plans = cursor.fetchall()
+        conn.close()
+        
+        if not plans:
+            return f"No plans found matching '{filter_criteria}'"
+        
+        result = f"Available plans ({len(plans)} found):\n"
+        for plan in plans:
+            plan_id, name, cost, unlimited, intl = plan
+            features = []
+            if unlimited:
+                features.append("Unlimited Data")
+            if intl:
+                features.append("Intl Roaming")
+            features_str = ", ".join(features) if features else "Standard"
+            result += f"  - {plan_id}: {name} (₹{cost}/month) [{features_str}]\n"
+        
+        return result.strip()
     
     def check_coverage_in_area(city: str) -> str:
         """Check coverage quality in a specific city"""
@@ -111,6 +195,7 @@ def create_service_agent(db_uri: str = "sqlite:///telecom_assistant/data/telecom
     
     usage_query_tool = None
     plan_query_tool = None
+    list_plans_tool = None
     coverage_tool = None
     if Tool is not object:
         try:  # pragma: no cover
@@ -123,6 +208,11 @@ def create_service_agent(db_uri: str = "sqlite:///telecom_assistant/data/telecom
                 name="get_plan_details",
                 func=get_plan_details,
                 description="Get service plan details from database. Input: plan_id (e.g., STD_500, BASIC_100)"
+            )
+            list_plans_tool = Tool(
+                name="list_all_plans",
+                func=list_all_plans,
+                description="List all available plans. Input: 'international' for plans with international roaming, 'unlimited' for unlimited data plans, or 'all' for all plans"
             )
             coverage_tool = Tool(
                 name="check_coverage_quality",
@@ -150,13 +240,16 @@ def create_service_agent(db_uri: str = "sqlite:///telecom_assistant/data/telecom
         except Exception:
             usage_estimate_tool = None
 
-    tools = [t for t in [usage_query_tool, plan_query_tool, coverage_tool, python_tool, usage_estimate_tool] if t]
+    tools = [t for t in [usage_query_tool, plan_query_tool, list_plans_tool, coverage_tool, python_tool, usage_estimate_tool] if t]
 
     # TODO: Create the agent prompt
     prompt = None
     if PromptTemplate is not object:
         try:  # pragma: no cover
-            prompt = PromptTemplate(template=SERVICE_RECOMMENDATION_TEMPLATE, input_variables=["query"])
+            prompt = PromptTemplate(
+                template=SERVICE_RECOMMENDATION_TEMPLATE, 
+                input_variables=["input", "agent_scratchpad", "tools", "tool_names"]
+            )
         except Exception:
             prompt = None
 
@@ -165,19 +258,26 @@ def create_service_agent(db_uri: str = "sqlite:///telecom_assistant/data/telecom
     if create_react_agent is not object and llm and tools and prompt:
         try:  # pragma: no cover
             agent = create_react_agent(llm=llm, tools=tools, prompt=prompt)
-        except Exception:
+        except Exception as e:
+            if logger:
+                logger.error(f"Failed to create ReAct agent: {e}")
             agent = None
 
     # TODO: Create the AgentExecutor
     executor = None
     if AgentExecutor is not object and agent:
-        executor = AgentExecutor.from_agent_and_tools(
-            agent=agent,
-            tools=tools,
-            verbose=True,
-            max_iterations=6,
-            handle_parsing_errors=True,
-        )
+        try:  # pragma: no cover
+            executor = AgentExecutor.from_agent_and_tools(
+                agent=agent,
+                tools=tools,
+                verbose=True,
+                max_iterations=6,
+                handle_parsing_errors=True,
+            )
+        except Exception as e:
+            if logger:
+                logger.error(f"Failed to create AgentExecutor: {e}")
+            executor = None
     _SERVICE_EXECUTOR_CACHE = executor
     return executor
 
@@ -187,7 +287,7 @@ def process_recommendation_query(query: str) -> Dict[str, Any]:
     if not executor:
         return {"query": query, "error": "LangChain not initialized", "detail": "Dependencies or API key missing."}
     try:  # pragma: no cover
-        result = executor.invoke({"query": query})
+        result = executor.invoke({"input": query})
         return {
             "query": query,
             "plan": "Derived plan (see raw)",

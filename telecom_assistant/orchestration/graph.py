@@ -7,6 +7,7 @@ from agents.network_agents import process_network_query  # type: ignore
 from agents.service_agents import process_recommendation_query  # type: ignore
 from agents.knowledge_agents import process_knowledge_query  # type: ignore
 import json
+import re
 
 # Attempt to import LangGraph; provide minimal fallbacks if unavailable for linting
 try:
@@ -87,6 +88,34 @@ def classify_query(state: TelecomAssistantState) -> TelecomAssistantState:
         logger.info(f"Classified query='{query}' -> {classification}")
     return {**state, "classification": classification, "status": "classified"}
 
+
+def extract_city_from_address(address: str) -> str:
+    """
+    Extract city name from customer address.
+    
+    Args:
+        address: Full address string (e.g., "Apartment 301, Sunshine Towers, Bangalore")
+        
+    Returns:
+        City name or empty string if not found
+    """
+    if not address:
+        return ""
+    
+    # Common patterns: address usually ends with city name
+    # Split by comma and get the last non-empty part
+    parts = [p.strip() for p in address.split(',')]
+    if parts:
+        # Last part is usually the city
+        city = parts[-1]
+        # Remove any pin codes or state codes
+        city = re.sub(r'\d{6}', '', city)  # Remove 6-digit pin codes
+        city = re.sub(r'\b[A-Z]{2}\b', '', city)  # Remove state codes like "KA", "DL"
+        city = city.strip()
+        return city
+    
+    return ""
+
 # Routing function - determines next node based on classification
 def route_query(state: TelecomAssistantState) -> str:
     """Route the query to the appropriate node based on classification"""
@@ -121,8 +150,28 @@ def crew_ai_node(state: TelecomAssistantState) -> TelecomAssistantState:
 
 
 def autogen_node(state: TelecomAssistantState) -> TelecomAssistantState:
-    result = process_network_query(query=state.get('query',''))
+    """Process network troubleshooting with AutoGen, enriched with customer location."""
+    query = state.get('query', '')
+    customer_info = state.get('customer_info', {})
+    
+    # Enrich query with customer location if available
+    if customer_info:
+        address = customer_info.get('address', '')
+        city = extract_city_from_address(address)
+        
+        if city:
+            # Add location context to help agents find relevant incidents
+            enriched_query = f"Customer location: {city}. Issue: {query}"
+            if logger:
+                logger.info(f"Enriched network query with location: {city}")
+        else:
+            enriched_query = query
+    else:
+        enriched_query = query
+    
+    result = process_network_query(query=enriched_query)
     return {**state, "intermediate_responses": {"autogen": result}, "status": result.get("status", state.get("status"))}
+
 
 
 def langchain_node(state: TelecomAssistantState) -> TelecomAssistantState:

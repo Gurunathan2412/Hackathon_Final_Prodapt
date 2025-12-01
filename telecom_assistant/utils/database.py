@@ -114,6 +114,88 @@ def get_customer_tickets(customer_id: str, status: Optional[str] = None) -> List
     ]
 
 
+def get_all_support_tickets(status: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Get all support tickets across all customers (for admin view), optionally filtered by status"""
+    if status:
+        rows = fetch_all(
+            """SELECT t.ticket_id, t.customer_id, c.name as customer_name, t.issue_category, 
+               t.issue_description, t.creation_time, t.resolution_time, t.status, t.priority, 
+               t.resolution_notes 
+               FROM support_tickets t 
+               JOIN customers c ON t.customer_id = c.customer_id 
+               WHERE t.status = ? 
+               ORDER BY t.creation_time DESC""",
+            (status,)
+        )
+    else:
+        rows = fetch_all(
+            """SELECT t.ticket_id, t.customer_id, c.name as customer_name, t.issue_category, 
+               t.issue_description, t.creation_time, t.resolution_time, t.status, t.priority, 
+               t.resolution_notes 
+               FROM support_tickets t 
+               JOIN customers c ON t.customer_id = c.customer_id 
+               ORDER BY t.creation_time DESC"""
+        )
+    return [
+        {
+            'ticket_id': r[0],
+            'customer_id': r[1],
+            'customer_name': r[2],
+            'issue_category': r[3],
+            'issue_description': r[4],
+            'creation_time': r[5],
+            'resolution_time': r[6],
+            'status': r[7],
+            'priority': r[8],
+            'resolution_notes': r[9],
+        } for r in rows
+    ]
+
+
+def execute_query(query: str, params: Tuple = ()) -> int:
+    """Execute INSERT/UPDATE/DELETE and return affected rows"""
+    con = get_connection()
+    try:
+        cur = con.cursor()
+        cur.execute(query, params)
+        con.commit()
+        return cur.rowcount
+    finally:
+        con.close()
+
+
+def create_support_ticket(customer_id: str, category: str, description: str, priority: str) -> str:
+    """Create a new support ticket"""
+    import time
+    ticket_id = f"TKT{str(int(time.time()))[-6:]}"
+    
+    execute_query(
+        """INSERT INTO support_tickets 
+           (ticket_id, customer_id, issue_category, issue_description, 
+            priority, status, creation_time) 
+           VALUES (?, ?, ?, ?, ?, 'Open', datetime('now'))""",
+        (ticket_id, customer_id, category, description, priority)
+    )
+    
+    return ticket_id
+
+
+def update_ticket_status(ticket_id: str, status: str, resolution_notes: Optional[str] = None) -> None:
+    """Update ticket status and optionally add resolution notes"""
+    if status == "Resolved":
+        execute_query(
+            """UPDATE support_tickets 
+               SET status = ?, resolution_notes = ?, resolution_time = datetime('now') 
+               WHERE ticket_id = ?""",
+            (status, resolution_notes or "", ticket_id)
+        )
+    else:
+        execute_query(
+            "UPDATE support_tickets SET status = ? WHERE ticket_id = ?",
+            (status, ticket_id)
+        )
+
+
 def search_tickets_by_category(category: str) -> List[Dict[str, Any]]:
     """Search resolved tickets by issue category for common resolutions"""
     rows = fetch_all(

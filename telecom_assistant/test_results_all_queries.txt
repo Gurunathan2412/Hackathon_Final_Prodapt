@@ -1,0 +1,177 @@
+COMPREHENSIVE TEST RESULTS - All 17 Queries
+================================================================================
+
+Success Rate: 17/17 (100.0%)
+Classification Accuracy: 14/17 (82.4%)
+Total Time: 7.7 minutes
+
+
+1. Billing Query
+--------------------------------------------------------------------------------
+Query: Why did my bill increase by 200 this month?
+Expected: billing_account
+Actual: billing_account
+Agent: crew_ai
+Duration: 165.0s
+Success: Yes
+
+
+2. Billing Query
+--------------------------------------------------------------------------------
+Query: I see a charge for international roaming but I haven't traveled recently
+Expected: billing_account
+Actual: billing_account
+Agent: crew_ai
+Duration: 37.8s
+Success: Yes
+
+
+3. Billing Query
+--------------------------------------------------------------------------------
+Query: Can you explain the 'Value Added Services' charge on my bill?
+Expected: billing_account
+Actual: billing_account
+Agent: crew_ai
+Duration: 64.6s
+Success: Yes
+
+
+4. Billing Query
+--------------------------------------------------------------------------------
+Query: What's the early termination fee if I cancel my contract?
+Expected: billing_account
+Actual: knowledge_retrieval
+Agent: llamaindex
+Duration: 7.0s
+Success: Yes
+
+
+5. Network Query
+--------------------------------------------------------------------------------
+Query: I can't make calls from my home in Mumbai West
+Expected: network_troubleshooting
+Actual: network_troubleshooting
+Agent: autogen
+Duration: 29.0s
+Success: Yes
+
+
+6. Network Query
+--------------------------------------------------------------------------------
+Query: My data connection keeps dropping when I'm on the train
+Expected: network_troubleshooting
+Actual: network_troubleshooting
+Agent: autogen
+Duration: 27.6s
+Success: Yes
+
+
+7. Network Query
+--------------------------------------------------------------------------------
+Query: Why is my 5G connection slower than my friend's?
+Expected: network_troubleshooting
+Actual: network_troubleshooting
+Agent: autogen
+Duration: 25.0s
+Success: Yes
+
+
+8. Network Query
+--------------------------------------------------------------------------------
+Query: I get a 'No Service' error in my basement apartment
+Expected: network_troubleshooting
+Actual: network_troubleshooting
+Agent: autogen
+Duration: 28.9s
+Success: Yes
+
+
+9. Service Query
+--------------------------------------------------------------------------------
+Query: What's the best plan for a family of four who watches a lot of videos?
+Expected: service_recommendation
+Actual: knowledge_retrieval
+Agent: llamaindex
+Duration: 3.6s
+Success: Yes
+
+
+10. Service Query
+--------------------------------------------------------------------------------
+Query: I need a plan with good international calling to the US
+Expected: service_recommendation
+Actual: service_recommendation
+Agent: langchain
+Duration: 7.7s
+Success: Yes
+
+
+11. Service Query
+--------------------------------------------------------------------------------
+Query: Which plan is best for someone who works from home and needs reliable data?
+Expected: service_recommendation
+Actual: service_recommendation
+Agent: langchain
+Duration: 9.5s
+Success: Yes
+
+
+12. Service Query
+--------------------------------------------------------------------------------
+Query: I'm a light user who mostly just calls and texts. What's my cheapest option?
+Expected: service_recommendation
+Actual: knowledge_retrieval
+Agent: llamaindex
+Duration: 5.3s
+Success: Yes
+
+
+13. Knowledge Query
+--------------------------------------------------------------------------------
+Query: How do I set up VoLTE on my Samsung phone?
+Expected: knowledge_retrieval
+Actual: knowledge_retrieval
+Agent: llamaindex
+Duration: 3.7s
+Success: Yes
+
+
+14. Knowledge Query
+--------------------------------------------------------------------------------
+Query: What are the APN settings for Android devices?
+Expected: knowledge_retrieval
+Actual: knowledge_retrieval
+Agent: llamaindex
+Duration: 5.7s
+Success: Yes
+
+
+15. Knowledge Query
+--------------------------------------------------------------------------------
+Query: How can I activate international roaming before traveling?
+Expected: knowledge_retrieval
+Actual: knowledge_retrieval
+Agent: llamaindex
+Duration: 4.8s
+Success: Yes
+
+
+16. Knowledge Query
+--------------------------------------------------------------------------------
+Query: What areas in Delhi have 5G coverage?
+Expected: knowledge_retrieval
+Actual: knowledge_retrieval
+Agent: llamaindex
+Duration: 2.3s
+Success: Yes
+
+
+17. Edge Query
+--------------------------------------------------------------------------------
+Query: I need help with both my bill and network issues
+Expected: billing_account
+Actual: billing_account
+Agent: crew_ai
+Duration: 36.9s
+Success: Yes
+

@@ -1,5 +1,9 @@
 # CrewAI implementation
+import os
 from typing import Dict, Any  # Removed Optional (unused)
+
+# MUST disable telemetry BEFORE importing CrewAI
+os.environ["OTEL_SDK_DISABLED"] = "true"
 
 try:
     from crewai import Agent, Task, Crew, Process  # type: ignore
@@ -18,29 +22,38 @@ except Exception:
 BILLING_PROMPT = """
 You are an experienced telecom billing specialist who analyzes customer bills.
 Your job is to:
-1. Examine the customer's current and previous bills to identify any changes
-2. Explain each charge in simple language
-3. Identify any unusual or one-time charges
-4. Verify that all charges are consistent with the customer's plan
-5. Check past support tickets to see if customer had billing issues before
+1. Use tools to fetch the customer's actual billing data from the database
+2. Examine the customer's current and previous bills to identify any changes
+3. Explain each charge in simple language
+4. Identify any unusual or one-time charges
+5. Verify that all charges are consistent with the customer's plan
+
+CRITICAL RULES:
+- ONLY report data that exists in the database (from get_customer_usage tool)
+- If only ONE billing period exists, say "No previous billing data available for comparison"
+- DO NOT invent or fabricate billing periods, dates, or usage numbers
+- If a comparison is not possible, explain charges for the single period only
 
 Available tools: customer data, usage history, service plans, past tickets, and more.
-Always start by retrieving the customer's most recent bill, then compare it with previous periods.
-Check customer ticket history for context on recurring issues.
+Always start by retrieving the customer's usage data with get_customer_usage.
 """.strip()
 
 ADVISOR_PROMPT = """
 You are a telecom service advisor who helps customers optimize their plans.
 Your job is to:
-1. Analyze the customer's usage patterns (data, calls, texts)
-2. Compare their usage with their current plan limits
-3. Identify if they are paying for services they don't use
-4. Suggest better plans if available
-5. Consider the customer's location and coverage quality when recommending
+1. Use tools to fetch actual customer usage data from the database
+2. Analyze the customer's usage patterns (data, calls, texts)
+3. Compare their usage with their current plan limits
+4. Identify if they are paying for services they don't use
+5. Suggest better plans if available based on real usage data
+
+CRITICAL RULES:
+- ONLY use actual data from get_customer_usage and get_service_plan tools
+- DO NOT make assumptions about usage patterns without data
+- Base recommendations only on verified usage history from the database
 
 Available tools: usage data, service plans, coverage quality, service areas, and more.
 Be specific about potential savings or benefits of your recommendations.
-Use coverage and area information to ensure recommended plans work in customer's location.
 """.strip()
 
 # References to constants (to silence unused warnings until integrated)
@@ -90,19 +103,29 @@ def create_billing_crew(db_uri: str = "sqlite:///telecom_assistant/data/telecom.
                 logger.info("Creating billing and service agents")
             billing_agent = Agent(
                 role="Billing Specialist",
-                backstory="Senior billing analyst with 10 years of telecom experience",
-                goal="Explain bill components and identify unusual changes",
+                backstory=(
+                    "Senior billing analyst with 10 years of telecom experience. "
+                    "Known for accuracy and never making assumptions without data. "
+                    "Always verifies information using database tools before reporting."
+                ),
+                goal="Explain bill components accurately using only verified database data",
                 tools=database_tools,
                 llm=llm,
                 allow_delegation=False,
+                max_iter=5,  # Limit iterations to prevent infinite loops
             )
             service_agent = Agent(
                 role="Service Advisor",
-                backstory="Helps customers optimize telecom services",
-                goal="Assess plan suitability and suggest optimizations",
+                backstory=(
+                    "Customer-focused telecom advisor who helps optimize plans. "
+                    "Uses actual usage data to make recommendations. "
+                    "Never suggests changes without verifying customer usage patterns first."
+                ),
+                goal="Provide data-driven plan recommendations based on verified usage",
                 tools=database_tools,
                 llm=llm,
                 allow_delegation=False,
+                max_iter=5,  # Limit iterations to prevent infinite loops
             )
             if logger:
                 logger.info("Agents created successfully")
@@ -122,18 +145,64 @@ def create_billing_crew(db_uri: str = "sqlite:///telecom_assistant/data/telecom.
     if Task is not object and billing_agent and service_agent:
         try:  # pragma: no cover
             billing_task = Task(
-                description="Analyze the most recent bill and compare with previous period. Provide change summary.",
-                expected_output="A detailed bill analysis with line-item explanations and comparison to previous month.",
+                description=(
+                    "Analyze the customer's most recent bill using get_customer_usage tool. "
+                    "IMPORTANT STEPS:\n"
+                    "1. Fetch usage data with get_customer_usage tool\n"
+                    "2. Check how many billing periods are returned\n"
+                    "3. If user asks 'why is bill HIGHER' or asks for COMPARISON:\n"
+                    "   - If only 1 period exists: START response with 'I can only see one billing period in your history. "
+                    "Without previous billing data, I cannot determine if your bill increased or compare to prior months.'\n"
+                    "   - If 2+ periods exist: Compare the two most recent periods\n"
+                    "4. Only report data that actually exists in the database\n"
+                    "5. Do not fabricate billing periods or usage data"
+                ),
+                expected_output=(
+                    "A detailed bill analysis. "
+                    "If user asks for comparison but only one period exists, start with limitation statement. "
+                    "Then provide line-item explanations for the available period(s). "
+                    "If multiple periods exist, include period-to-period comparison."
+                ),
                 agent=billing_agent,
             )
             advisor_task = Task(
-                description="Review usage vs current plan limits. Identify inefficiencies.",
-                expected_output="Plan optimization analysis with specific recommendations for cost savings.",
+                description=(
+                    "Review the customer's actual usage data from get_customer_usage tool "
+                    "and compare it with their current plan limits from get_service_plan tool. "
+                    "CRITICAL RULES:\n"
+                    "1. Get actual usage numbers from get_customer_usage\n"
+                    "2. Get plan limits from get_service_plan\n"
+                    "3. NEVER recommend a plan with LOWER limits than customer's actual usage\n"
+                    "   Example: If customer uses 4.5 GB, DO NOT suggest 3 GB plan (causes overages!)\n"
+                    "4. Only suggest downgrade if usage is significantly below current plan limits\n"
+                    "5. Consider buffer room - don't recommend plans at exact usage level"
+                ),
+                expected_output=(
+                    "Plan optimization analysis with safe, practical recommendations. "
+                    "If customer's usage is close to plan limits, say 'You are using your plan efficiently.' "
+                    "Only suggest alternatives if there's significant underutilization. "
+                    "Never recommend plans that would cause overage charges."
+                ),
                 agent=service_agent,
             )
             synthesis_task = Task(
-                description="Combine billing analysis and usage review into final customer report with recommendations.",
-                expected_output="Customer-friendly report explaining charges and suggesting plan optimizations.",
+                description=(
+                    "Combine the billing analysis and plan review into a final customer report. "
+                    "IMPORTANT RULES:\n"
+                    "1. If billing analysis mentions 'only one billing period' or 'cannot compare', "
+                    "KEEP that statement at the START of your response\n"
+                    "2. If plan review says customer is using plan efficiently, don't override with downgrade suggestions\n"
+                    "3. Provide clear explanations and actionable recommendations\n"
+                    "4. Do not add information not present in previous task outputs\n"
+                    "5. Do not contradict findings from billing or advisor tasks"
+                ),
+                expected_output=(
+                    "Customer-friendly report that:\n"
+                    "- Starts with any data limitation statements from billing analysis\n"
+                    "- Explains charges clearly\n"
+                    "- Includes safe, practical plan recommendations from advisor\n"
+                    "- Does not suggest plans that would cause overages"
+                ),
                 agent=billing_agent,
             )
         except Exception:
@@ -149,7 +218,8 @@ def create_billing_crew(db_uri: str = "sqlite:///telecom_assistant/data/telecom.
                 agents=[billing_agent, service_agent],
                 tasks=[billing_task, advisor_task, synthesis_task],
                 process=Process.sequential,
-                verbose=False,
+                verbose=True,  # Enable output so user can see progress
+                max_rpm=10,  # Limit API calls
             )
             if logger:
                 logger.info("Crew created successfully")
@@ -178,6 +248,8 @@ def process_billing_query(customer_id: str, query: str) -> Dict[str, Any]:
     try:  # pragma: no cover
         result = crew.kickoff(inputs={"customer_id": customer_id, "query": query})
         result_text = str(result)
+        
+        # Return the actual CrewAI response directly
         return {
             "customer_id": customer_id,
             "query": query,

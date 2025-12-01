@@ -4,7 +4,7 @@ pandas
 langgraph
 crewai
 autogen
-langchain
+langchain==0.3.13
 llama-index
 llama-index-core
 llama-index-llms-openai
