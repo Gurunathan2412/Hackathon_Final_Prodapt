@@ -57,3 +57,7 @@ test_results*.txt
 *.tmp
 *.bak
 *.backup
+
+# Documentation (keep local, don't commit)
+docs/
+telecom_assistant/docs/
