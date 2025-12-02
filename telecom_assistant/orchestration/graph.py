@@ -54,24 +54,36 @@ except Exception:
 
 def classify_query(state: TelecomAssistantState) -> TelecomAssistantState:
     query = state.get("query", "").strip()
-    if len(query) < 3 or query.lower() in {"hi", "hello", "hey"}:
-        return {**state, "classification": "fallback"}
-    classification = "billing_account"
     ql = query.lower()
+    
+    # Filter out non-support queries first
+    if len(query) < 3 or ql in {"hi", "hello", "hey"}:
+        return {**state, "classification": "fallback"}
+    
+    # Detect irrelevant/entertainment queries
+    irrelevant_keywords = {"joke", "funny", "story", "poem", "song", "game", "play", "chat", "talk"}
+    if any(k in ql for k in irrelevant_keywords):
+        return {**state, "classification": "fallback"}
+    
+    classification = "billing_account"
     if _llm_classifier:
         try:  # pragma: no cover
             prompt = (
-                "Classify the telecom user query into exactly one category:\n"
+                "You are a telecom support query classifier. Classify ONLY legitimate telecom support queries.\n\n"
+                "Valid Categories:\n"
                 "- billing_account: Questions about bills, charges, payments, invoices, account balance, billing details\n"
                 "- network_troubleshooting: Issues with network, signal, connectivity, call quality, data speed, internet problems\n"
                 "- service_recommendation: Requests for plan recommendations, upgrades, best plans, comparing plans\n"
-                "- knowledge_retrieval: How-to questions, setup instructions, configuration guides, technical procedures\n\n"
+                "- knowledge_retrieval: How-to questions, setup instructions, configuration guides, technical procedures\n"
+                "- fallback: Jokes, entertainment, chitchat, off-topic questions, anything not related to telecom support\n\n"
                 f"Query: {query}\n\n"
-                "Respond with ONLY the category name, nothing else:"
+                "If this is a legitimate telecom support question, respond with the category name.\n"
+                "If this is a joke, entertainment, or off-topic request, respond with 'fallback'.\n"
+                "Response:"
             )
             resp = _llm_classifier.invoke(prompt)  # type: ignore
             raw = getattr(resp, 'content', '').lower().strip()
-            for label in ["billing_account","network_troubleshooting","service_recommendation","knowledge_retrieval"]:
+            for label in ["billing_account","network_troubleshooting","service_recommendation","knowledge_retrieval","fallback"]:
                 if label in raw:
                     classification = label
                     break
@@ -229,7 +241,17 @@ def fallback_handler(state: TelecomAssistantState) -> TelecomAssistantState:
         "I'm not sure how to help with that specific question. Could you try rephrasing or ask "
         "about our services, billing, network issues, or technical support?"
     )
-    return {**state, "intermediate_responses": {"fallback": response}, "status": "ok"}
+    return {
+        **state, 
+        "intermediate_responses": {
+            "fallback": {
+                "query": state.get("query", ""),
+                "response": response,
+                "status": "ok"
+            }
+        }, 
+        "status": "ok"
+    }
 
 
 def formulate_response(state: TelecomAssistantState) -> TelecomAssistantState:

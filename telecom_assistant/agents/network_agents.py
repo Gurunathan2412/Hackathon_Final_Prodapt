@@ -5,7 +5,8 @@ from utils.database import (
     list_active_incidents,
     search_common_network_issues,
     get_troubleshooting_steps,
-    get_device_compatibility
+    get_device_compatibility,
+    get_covered_regions
 )
 
 try:
@@ -116,6 +117,23 @@ def create_network_agents(db_uri: str = "sqlite:///telecom_assistant/data/teleco
     # Create network incident checking function for AutoGen
     def check_network_incidents(region: str = "") -> str:
         """Check for active network incidents in a region. Returns incident details or confirms no issues."""
+        # Get list of regions we monitor
+        covered_regions = get_covered_regions()
+        
+        # If region specified, check if it's in our coverage
+        if region:
+            # Check if the region is covered (case-insensitive partial match)
+            is_covered = any(region.lower() in loc.lower() or loc.lower() in region.lower() for loc in covered_regions)
+            
+            if not is_covered:
+                regions_list = ", ".join(covered_regions)
+                return (
+                    f"'{region}' is not in our network monitoring coverage area. "
+                    f"We currently monitor these regions: {regions_list}. "
+                    f"For issues in other areas, please contact your local carrier support."
+                )
+        
+        # Check for incidents
         incidents = list_active_incidents(region if region else None)
         if not incidents:
             return f"No active incidents{' in ' + region if region else ''}. All networks operating normally."

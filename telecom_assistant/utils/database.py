@@ -61,6 +61,12 @@ def get_customer(customer_id: str) -> Optional[Dict[str, Any]]:
     return dict(zip(keys, row))
 
 
+def get_covered_regions() -> List[str]:
+    """Get list of regions we have network monitoring for"""
+    rows = fetch_all("SELECT DISTINCT location FROM network_incidents")
+    return [r[0] for r in rows]
+
+
 def list_active_incidents(region: Optional[str] = None) -> List[Dict[str, Any]]:
     if region:
         rows = fetch_all("SELECT incident_id, incident_type, location, affected_services, start_time, status, severity FROM network_incidents WHERE status != 'Resolved' AND location LIKE ?", (f"%{region}%",))
