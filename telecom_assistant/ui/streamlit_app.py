@@ -584,7 +584,25 @@ def main():
             cust_map = {f"{c['name']} ({c['customer_id']})": c['customer_id'] for c in customer_options}
             
             if cust_map:
-                selected_customer = st.selectbox("Customer", list(cust_map.keys()))
+                # Auto-select first customer if none selected
+                if st.session_state.selected_customer_id is None and customer_options:
+                    st.session_state.selected_customer_id = customer_options[0]['customer_id']
+                
+                # Find current selection or default to first
+                current_selection = None
+                for display_name, cid in cust_map.items():
+                    if cid == st.session_state.selected_customer_id:
+                        current_selection = display_name
+                        break
+                
+                if current_selection is None and cust_map:
+                    current_selection = list(cust_map.keys())[0]
+                
+                selected_customer = st.selectbox(
+                    "Customer", 
+                    list(cust_map.keys()),
+                    index=list(cust_map.keys()).index(current_selection) if current_selection else 0
+                )
                 st.session_state.selected_customer_id = cust_map.get(selected_customer)
             else:
                 st.warning("No customers found in database")

@@ -147,8 +147,10 @@ def create_billing_crew(db_uri: str = "sqlite:///telecom_assistant/data/telecom.
             billing_task = Task(
                 description=(
                     "Analyze the customer's most recent bill using get_customer_usage tool. "
+                    "Customer ID: {customer_id}\n"
+                    "Query: {query}\n\n"
                     "IMPORTANT STEPS:\n"
-                    "1. Fetch usage data with get_customer_usage tool\n"
+                    "1. Use get_customer_usage tool with customer_id '{customer_id}' to fetch usage data\n"
                     "2. Check how many billing periods are returned\n"
                     "3. If user asks 'why is bill HIGHER' or asks for COMPARISON:\n"
                     "   - If only 1 period exists: START response with 'I can only see one billing period in your history. "
@@ -167,8 +169,10 @@ def create_billing_crew(db_uri: str = "sqlite:///telecom_assistant/data/telecom.
             )
             advisor_task = Task(
                 description=(
-                    "Review the customer's actual usage data from get_customer_usage tool "
-                    "and compare it with their current plan limits from get_service_plan tool. "
+                    "Review the customer's actual usage data and plan suitability. "
+                    "Customer ID: {customer_id}\n\n"
+                    "Use get_customer_usage tool with customer_id '{customer_id}' to fetch usage data. "
+                    "Then use get_service_plan tool to get their current plan details. "
                     "CRITICAL RULES:\n"
                     "1. Get actual usage numbers from get_customer_usage\n"
                     "2. Get plan limits from get_service_plan\n"

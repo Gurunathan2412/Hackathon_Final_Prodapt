@@ -61,10 +61,16 @@ def classify_query(state: TelecomAssistantState) -> TelecomAssistantState:
     if _llm_classifier:
         try:  # pragma: no cover
             prompt = (
-                "Classify the telecom user query into one of: billing_account, network_troubleshooting, service_recommendation, knowledge_retrieval.\n"
-                f"Query: {query}\nLabel:" )
+                "Classify the telecom user query into exactly one category:\n"
+                "- billing_account: Questions about bills, charges, payments, invoices, account balance, billing details\n"
+                "- network_troubleshooting: Issues with network, signal, connectivity, call quality, data speed, internet problems\n"
+                "- service_recommendation: Requests for plan recommendations, upgrades, best plans, comparing plans\n"
+                "- knowledge_retrieval: How-to questions, setup instructions, configuration guides, technical procedures\n\n"
+                f"Query: {query}\n\n"
+                "Respond with ONLY the category name, nothing else:"
+            )
             resp = _llm_classifier.invoke(prompt)  # type: ignore
-            raw = getattr(resp, 'content', '').lower()
+            raw = getattr(resp, 'content', '').lower().strip()
             for label in ["billing_account","network_troubleshooting","service_recommendation","knowledge_retrieval"]:
                 if label in raw:
                     classification = label
@@ -77,13 +83,26 @@ def classify_query(state: TelecomAssistantState) -> TelecomAssistantState:
         elif any(w in ql for w in ["network","signal","connection","call","data","slow"]):
             classification = "network_troubleshooting"
     # Apply keyword overrides AFTER LLM or heuristic classification
-    knowledge_keywords = {"how", "what", "configure", "setup", "apn", "volte"}
+    # Check for billing keywords first to protect billing classification
+    billing_keywords = {"bill", "charge", "payment", "account", "invoice", "balance"}
+    has_billing_keywords = any(k in ql for k in billing_keywords)
+    
+    knowledge_keywords = {"configure", "setup", "apn", "volte", "install", "enable"}
+    service_keywords = {"plan", "recommend", "best", "upgrade", "family"}
+    
+    # Priority 1: Knowledge retrieval (setup/configuration questions)
     if any(k in ql for k in knowledge_keywords):
-        classification = "knowledge_retrieval"
-    else:
-        service_keywords = {"plan", "recommend", "best", "upgrade", "family"}
-        if classification not in {"knowledge_retrieval"} and any(k in ql for k in service_keywords):
+        # Only override to knowledge if there are no billing keywords
+        if not has_billing_keywords:
+            classification = "knowledge_retrieval"
+    # Priority 2: Service recommendations (plan questions without billing context)
+    elif any(k in ql for k in service_keywords) and not has_billing_keywords:
+        # Override to service_recommendation if not already billing or network troubleshooting
+        if classification not in {"billing_account", "network_troubleshooting"}:
             classification = "service_recommendation"
+    # Priority 3: Generic "what" or "how" questions about plans = service recommendation
+    elif ("what" in ql or "how" in ql) and any(k in ql for k in service_keywords) and not has_billing_keywords:
+        classification = "service_recommendation"
     if logger and state.get("classification") != classification:
         logger.info(f"Classified query='{query}' -> {classification}")
     return {**state, "classification": classification, "status": "classified"}
@@ -139,12 +158,25 @@ def route_query(state: TelecomAssistantState) -> str:
 def crew_ai_node(state: TelecomAssistantState) -> TelecomAssistantState:
     customer_info = state.get('customer_info', {})
     customer_id = customer_info.get('customer_id', 'UNKNOWN')
+    
+    # Check if customer is selected
+    if not customer_info or customer_id == 'UNKNOWN':
+        # Return a helpful message asking user to select a customer
+        return {
+            **state, 
+            "intermediate_responses": {
+                "crew_ai": {
+                    "query": state.get('query', ''),
+                    "raw": "Please select a customer from the sidebar to view billing information. I need to know which account to analyze before I can help with billing questions.",
+                    "status": "ok"
+                }
+            }, 
+            "status": "ok"
+        }
+    
     # Pass full customer info context in the query for better responses
     query = state.get('query','')
-    if customer_info:
-        context_query = f"Customer: {customer_id} ({customer_info.get('name','')}), Plan: {customer_info.get('service_plan_id','')}. Query: {query}"
-    else:
-        context_query = query
+    context_query = f"Customer: {customer_id} ({customer_info.get('name','')}), Plan: {customer_info.get('service_plan_id','')}. Query: {query}"
     result = process_billing_query(customer_id=customer_id, query=context_query)
     return {**state, "intermediate_responses": {"crew_ai": result}, "status": result.get("status", state.get("status"))}
 
@@ -212,12 +244,43 @@ def formulate_response(state: TelecomAssistantState) -> TelecomAssistantState:
             if 'fallback' in val:
                 formatted += f"\nFallback: {val['fallback']}"
         else:
-            formatted_lines = []
-            for k,v in val.items():
-                if k in {"raw"}:
-                    continue
-                formatted_lines.append(f"{k}: {v if not isinstance(v,(list,dict)) else json.dumps(v)[:400]}")
-            formatted = "\n".join(formatted_lines)
+            # Extract human-readable response based on agent type
+            if "answer" in val:
+                # LlamaIndex knowledge response - direct answer
+                formatted = val["answer"]
+            elif "raw" in val and isinstance(val["raw"], str):
+                # CrewAI billing or LangChain service response - contains actual LLM output
+                raw_content = val["raw"]
+                # Try to parse as dict/eval to extract 'output' field (LangChain format)
+                try:
+                    import ast
+                    parsed = ast.literal_eval(raw_content)
+                    if isinstance(parsed, dict) and "output" in parsed:
+                        formatted = parsed["output"]
+                    else:
+                        formatted = raw_content
+                except Exception:
+                    # If parsing fails, use raw content as-is (CrewAI format)
+                    formatted = raw_content
+            elif "transcript" in val:
+                # AutoGen network response - use last message from transcript
+                transcript = val.get("transcript", [])
+                if transcript:
+                    # Get the last assistant message
+                    formatted = transcript[-1] if isinstance(transcript[-1], str) else str(transcript[-1])
+                else:
+                    formatted = "Network troubleshooting steps generated. Check the detailed view for more information."
+            elif "response" in val:
+                # Generic response field
+                formatted = val["response"]
+            else:
+                # Fallback to generic formatting
+                formatted_lines = []
+                for k,v in val.items():
+                    if k in {"status", "summary", "query", "customer_id"}:
+                        continue
+                    formatted_lines.append(f"{k}: {v if not isinstance(v,(list,dict)) else json.dumps(v)[:400]}")
+                formatted = "\n".join(formatted_lines) if formatted_lines else str(val)
     else:
         formatted = str(val)
     return {**state, "final_response": formatted, "status": state.get("status","completed")}
